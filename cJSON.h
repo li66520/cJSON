@@ -328,7 +328,7 @@ CJSON_PUBLIC(cJSON_bool) cJSON_Compare(const cJSON * const a, const cJSON * cons
 /* Minify a strings, remove blank characters(such as ' ', '\t', '\r', '\n') from strings.
  * The input pointer json cannot point to a read-only address area, such as a string constant, 
  * but should point to a readable and writable address area. */
-CJSON_PUBLIC(void) cJSON_Minify(char *json);
+CJSON_PUBLIC(cJSON_bool) cJSON_Minify(char *json, size_t json_len);
 
 /* Helper functions for creating and adding items to an object at the same time.
  * They return the added item or NULL on failure. */
@@ -373,7 +373,11 @@ CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
 // 1. 统一数组/对象的遍历逻辑（两者都是child指向第一个子节点，next连接后续节点）；
 // 2. 空指针安全：array为NULL时element置NULL，循环不执行；
 // 3. 简化遍历代码：替代手动写for循环，减少样板代码，提升可读性
-/* malloc/free objects using the malloc/free functions that have been set with cJSON_InitHooks */
+/* malloc/free objects using the malloc/free functions that have been set with cJSON_InitHooks
+ * 安全约束：
+ * 1. cJSON_malloc 拒绝0长度分配（标准库malloc(0)行为未定义），返回NULL；
+ * 2. cJSON_malloc 分配失败时会输出错误日志（便于调试内存不足）；
+ * 3. cJSON_free 传入NULL时无操作（避免double free/空指针崩溃） */
 CJSON_PUBLIC(void *) cJSON_malloc(size_t size);
 CJSON_PUBLIC(void) cJSON_free(void *object);
 // 1. 统一内存分配/释放入口（无论是否设置钩子，都通过该函数）；
