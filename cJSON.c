@@ -127,7 +127,7 @@ CJSON_PUBLIC(double) cJSON_GetNumberValue(const cJSON * const item)
 CJSON_PUBLIC(const char*) cJSON_Version(void)
 {
     static char version[15];// 静态变量：生命周期同程序，避免栈内存释放问题
-    sprintf(version, "%i.%i.%i", CJSON_VERSION_MAJOR, CJSON_VERSION_MINOR, CJSON_VERSION_PATCH);
+snprintf(version, sizeof(version), "%i.%i.%i", CJSON_VERSION_MAJOR, CJSON_VERSION_MINOR, CJSON_VERSION_PATCH);
 
     return version;
 }
@@ -535,16 +535,17 @@ CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
     v1_len = strlen(valuestring);
     v2_len = strlen(object->valuestring);
 
-    if (v1_len <= v2_len)
+if (v1_len <= v2_len)
+{
+    /* memmove handles overlapping strings, strcpy does not */
+    if (!( valuestring + v1_len < object->valuestring || object->valuestring + v2_len < valuestring ))
     {
-        /* strcpy does not handle overlapping string: [X1, X2] [Y1, Y2] => X2 < Y1 or Y2 < X1 */
-        if (!( valuestring + v1_len < object->valuestring || object->valuestring + v2_len < valuestring ))
-        {
-            return NULL;
-        }
-        strcpy(object->valuestring, valuestring);
-        return object->valuestring;
+        return NULL;
     }
+    // memmove指定长度，严格限制写入，避免溢出；天然支持字符串重叠
+    memmove(object->valuestring, valuestring, v1_len + 1); // +1 包含\0终止符
+    return object->valuestring;
+}
     copy = (char*) cJSON_strdup((const unsigned char*)valuestring, &global_hooks);
     if (copy == NULL)
     {
@@ -737,26 +738,26 @@ static cJSON_bool print_number(const cJSON * const item, printbuffer * const out
     }
  // 处理 NaN/Infinity（JSON 标准不支持，序列化为 null）
     /* This checks for NaN and Infinity */
-    if (isnan(d) || isinf(d))
-    {
-        length = sprintf((char*)number_buffer, "null");
-    }
-    else if(d == (double)item->valueint)
-    {
-        length = sprintf((char*)number_buffer, "%d", item->valueint);
-    }
-    else
-    {
-        /* Try 15 decimal places of precision to avoid nonsignificant nonzero digits */
-        length = sprintf((char*)number_buffer, "%1.15g", d);
+if (isnan(d) || isinf(d))
+{
+    length = snprintf((char*)number_buffer, sizeof(number_buffer), "null");
+}
+else if(d == (double)item->valueint)
+{
+    length = snprintf((char*)number_buffer, sizeof(number_buffer), "%d", item->valueint);
+}
+else
+{
+    /* Try 15 decimal places of precision to avoid nonsignificant nonzero digits */
+    length = snprintf((char*)number_buffer, sizeof(number_buffer), "%1.15g", d);
 
-        /* Check whether the original double can be recovered */
-        if ((sscanf((char*)number_buffer, "%lg", &test) != 1) || !compare_double((double)test, d))
-        {
-            /* If not, print with 17 decimal places of precision */
-            length = sprintf((char*)number_buffer, "%1.17g", d);
-        }
+    /* Check whether the original double can be recovered */
+    if ((sscanf((char*)number_buffer, "%lg", &test) != 1) || !compare_double((double)test, d))
+    {
+        /* If not, print with 17 decimal places of precision */
+        length = snprintf((char*)number_buffer, sizeof(number_buffer), "%1.17g", d);
     }
+}
 
     /* sprintf failed or buffer overrun occurred */
     if ((length < 0) || (length > (int)(sizeof(number_buffer) - 1)))
@@ -1130,20 +1131,20 @@ static cJSON_bool print_string_ptr(const unsigned char * const input, printbuffe
     {
         return false;
     }
-
-    /* empty string */
-    if (input == NULL)
+/* empty string */
+if (input == NULL)
+{
+    size_t empty_str_len = sizeof("\"\"") - 1; // """ 的有效长度（不含\0）
+    output = ensure(output_buffer, empty_str_len + 1); // +1 预留\0终止符
+    if (output == NULL)
     {
-        output = ensure(output_buffer, sizeof("\"\""));
-        if (output == NULL)
-        {
-            return false;
-        }
-        strcpy((char*)output, "\"\"");
-
-        return true;
+        return false;
     }
+    // strncpy指定长度，避免缓冲区溢出
+    strncpy((char*)output, "\"\"", empty_str_len + 1);
 
+    return true;
+}
     /* set "flag" to 1 if something needs to be escaped */
     for (input_pointer = input; *input_pointer; input_pointer++)
     {
@@ -1684,32 +1685,44 @@ static cJSON_bool print_value(const cJSON * const item, printbuffer * const outp
 // 根据item类型（只取低8位，忽略标志位）选择对应打印函数
     switch ((item->type) & 0xFF)
     {
-        case cJSON_NULL:
-            output = ensure(output_buffer, 5);
-            if (output == NULL)
-            {
-                return false;
-            }
-            strcpy((char*)output, "null");
-            return true;
+case cJSON_NULL:
+{
+    const char *null_str = "null";
+    size_t null_len = strlen(null_str) + 1; // 包含\0的总长度
+    output = ensure(output_buffer, null_len);
+    if (output == NULL)
+    {
+        return false;
+    }
+    strncpy((char*)output, null_str, null_len);
+    return true;
+}
 
-        case cJSON_False:
-            output = ensure(output_buffer, 6);
-            if (output == NULL)
-            {
-                return false;
-            }
-            strcpy((char*)output, "false");
-            return true;
+case cJSON_False:
+{
+    const char *false_str = "false";
+    size_t false_len = strlen(false_str) + 1;
+    output = ensure(output_buffer, false_len);
+    if (output == NULL)
+    {
+        return false;
+    }
+    strncpy((char*)output, false_str, false_len);
+    return true;
+}
 
-        case cJSON_True:
-            output = ensure(output_buffer, 5);
-            if (output == NULL)
-            {
-                return false;
-            }
-            strcpy((char*)output, "true");
-            return true;
+case cJSON_True:
+{
+    const char *true_str = "true";
+    size_t true_len = strlen(true_str) + 1;
+    output = ensure(output_buffer, true_len);
+    if (output == NULL)
+    {
+        return false;
+    }
+    strncpy((char*)output, true_str, true_len);
+    return true;
+}
 
         case cJSON_Number:
             return print_number(item, output_buffer);
@@ -2166,9 +2179,22 @@ CJSON_PUBLIC(int) cJSON_GetArraySize(const cJSON *array)
 // 注意：size_t可能大于int，但API限制只能返回int，存在溢出风险
     /* FIXME: Can overflow here. Cannot be fixed without breaking the API */
 
-    return (int)size;
+    return size;
 }
 // 注意：size_t可能大于int，但API限制只能返回int，存在溢出风险
+// 兼容原有API，添加溢出检查
+CJSON_PUBLIC(int) cJSON_GetArraySize(const cJSON *array)
+{
+    size_t size = cJSON_GetArraySize_sizet(array);
+    
+    // 溢出保护：超过INT_MAX时返回INT_MAX
+    if (size > (size_t)INT_MAX)
+    {
+        return INT_MAX;
+    }
+
+    return (int)size;
+}
 static cJSON* get_array_item(const cJSON *array, size_t index)
 {
     cJSON *current_child = NULL;
@@ -2278,6 +2304,7 @@ static cJSON *create_reference(const cJSON *item, const internal_hooks * const h
 static cJSON_bool add_item_to_array(cJSON *array, cJSON *item)
 {
     cJSON *child = NULL;
+    cJSON *last_item = NULL;
 
     if ((item == NULL) || (array == NULL) || (array == item))
     {
@@ -2285,25 +2312,35 @@ static cJSON_bool add_item_to_array(cJSON *array, cJSON *item)
     }
 
     child = array->child;
-    /*
-     * To find the last item in array quickly, we use prev in array
-     */
+    /* 修复：取消自环，使用常规双向链表逻辑 */
     if (child == NULL)
     {
-        /* list is empty, start new one */
+        /* 空链表：头节点prev为NULL，next为NULL */
         array->child = item;
-        item->prev = item;// 头节点的prev指向自身（因为只有一个元素）
+        item->prev = NULL;  // 取消自环
         item->next = NULL;
     }
     else
     {
-        // 如果已有元素，child->prev是最后一个元素，直接在其后追加
-        /* append to the end */
-        if (child->prev)
+        // 查找最后一个元素（兼容原有快捷指针逻辑）
+        if (child->prev != NULL)
         {
-            suffix_object(child->prev, item);// 将item链接到原尾节点后
-            array->child->prev = item;// 更新头节点的prev指向新尾
+            last_item = child->prev;
         }
+        else
+        {
+            // 遍历找尾节点（初始化快捷指针）
+            last_item = child;
+            while (last_item->next != NULL)
+            {
+                last_item = last_item->next;
+            }
+            child->prev = last_item; // 初始化快捷指针
+        }
+
+        /* 追加到尾节点后 */
+        suffix_object(last_item, item);
+        array->child->prev = item; // 更新快捷指针
     }
 
     return true;
@@ -3170,28 +3207,55 @@ static void skip_multiline_comment(char **input)
     }
 }
 
+// 辅助函数：空指针/越界检查
+static inline int is_input_valid(const char *input)
+{
+    return (input != NULL) && (*input != '\0');
+}
+
 static void minify_string(char **input, char **output) {
-    (*output)[0] = (*input)[0];
-    *input += static_strlen("\"");
-    *output += static_strlen("\"");
+    if (!is_input_valid(*input) || !output || !*output)
+    {
+        return; // 空指针保护
+    }
 
+    // 复制开头引号
+    **output = **input;
+    (*input)++;
+    (*output)++;
 
-    for (; (*input)[0] != '\0'; (void)++(*input), ++(*output)) {
-        (*output)[0] = (*input)[0];
-
-        if ((*input)[0] == '\"') {
-            // 遇到未转义的引号，结束字符串
-            (*output)[0] = '\"';
-            *input += static_strlen("\"");
-            *output += static_strlen("\"");
+    // 遍历字符串内容
+    while (is_input_valid(*input))
+    {
+        if (**input == '\"' && *(*input - 1) != '\\')
+        {
+            // 未转义的结束引号
+            **output = '\"';
+            (*input)++;
+            (*output)++;
             return;
-        } else if (((*input)[0] == '\\') && ((*input)[1] == '\"')) {
-            // 遇到转义的引号，需要复制两个字符
-            (*output)[1] = (*input)[1];
-            *input += static_strlen("\"");
-            *output += static_strlen("\"");
+        }
+        else if (**input == '\\' && is_input_valid(*input + 1))
+        {
+            // 处理所有转义字符（\", \\, \n等）
+            **output = '\\';
+            (*output)++;
+            (*input)++;
+
+            **output = **input;
+            (*output)++;
+            (*input)++;
+        }
+        else
+        {
+            // 普通字符直接复制
+            **output = **input;
+            (*output)++;
+            (*input)++;
         }
     }
+
+    **output = '\0'; // 防御性结尾
 }
 // 移除JSON字符串中的所有空白和注释，实现最小化
 CJSON_PUBLIC(void) cJSON_Minify(char *json)
@@ -3342,130 +3406,154 @@ CJSON_PUBLIC(cJSON_bool) cJSON_IsRaw(const cJSON * const item)
     return (item->type & 0xFF) == cJSON_Raw;
 }
 // 比较两个JSON节点是否相等
-CJSON_PUBLIC(cJSON_bool) cJSON_Compare(const cJSON * const a, const cJSON * const b, const cJSON_bool case_sensitive)
+// 哈希表节点（键→cJSON节点映射）
+typedef struct {
+    char *key;
+    const cJSON *value;
+    struct hash_node *next;
+} hash_node;
+
+typedef struct {
+    hash_node **buckets;
+    size_t size;
+    const internal_hooks *hooks;
+    cJSON_bool case_sensitive;
+} str_hash_table;
+
+// DJB2哈希函数
+static size_t hash_string(const char *str, cJSON_bool case_sensitive)
 {
-    if ((a == NULL) || (b == NULL) || ((a->type & 0xFF) != (b->type & 0xFF)))
+    size_t hash = 5381;
+    int c;
+    if (str == NULL) return 0;
+
+    while ((c = *str++) != '\0')
     {
-        return false;
+        if (!case_sensitive) c = tolower(c);
+        hash = ((hash << 5) + hash) + c; // hash * 33 + c
     }
-// 检查类型有效性
-    /* check if type is valid */
-    switch (a->type & 0xFF)
+    return hash;
+}
+
+// 创建哈希表
+static str_hash_table *create_hash_table(size_t size, const internal_hooks *hooks, cJSON_bool case_sensitive)
+{
+    str_hash_table *table = (str_hash_table*)hooks->allocate(sizeof(str_hash_table));
+    if (!table) return NULL;
+
+    table->buckets = (hash_node**)hooks->allocate(size * sizeof(hash_node*));
+    if (!table->buckets) { hooks->deallocate(table); return NULL; }
+
+    memset(table->buckets, 0, size * sizeof(hash_node*));
+    table->size = size;
+    table->hooks = hooks;
+    table->case_sensitive = case_sensitive;
+
+    return table;
+}
+
+// 插入键值对
+static cJSON_bool hash_table_insert(str_hash_table *table, const char *key, const cJSON *value)
+{
+    if (!table || !key || !value) return false;
+
+    size_t idx = hash_string(key, table->case_sensitive) % table->size;
+    hash_node *new_node = (hash_node*)table->hooks->allocate(sizeof(hash_node));
+    if (!new_node) return false;
+
+    new_node->key = (char*)cJSON_strdup((const unsigned char*)key, table->hooks);
+    if (!new_node->key) { table->hooks->deallocate(new_node); return false; }
+
+    new_node->value = value;
+    new_node->next = table->buckets[idx];
+    table->buckets[idx] = new_node;
+
+    return true;
+}
+
+// 查找键
+static const cJSON *hash_table_lookup(str_hash_table *table, const char *key)
+{
+    if (!table || !key) return NULL;
+
+    size_t idx = hash_string(key, table->case_sensitive) % table->size;
+    hash_node *node = table->buckets[idx];
+
+    while (node)
     {
-        case cJSON_False:
-        case cJSON_True:
-        case cJSON_NULL:
-        case cJSON_Number:
-        case cJSON_String:
-        case cJSON_Raw:
-        case cJSON_Array:
-        case cJSON_Object:
+        int cmp = table->case_sensitive ? strcmp(node->key, key) : strcasecmp(node->key, key);
+        if (cmp == 0) return node->value;
+        node = node->next;
+    }
+    return NULL;
+}
+
+// 销毁哈希表
+static void destroy_hash_table(str_hash_table *table)
+{
+    if (!table) return;
+
+    for (size_t i = 0; i < table->size; i++)
+    {
+        hash_node *node = table->buckets[i];
+        while (node)
+        {
+            hash_node *next = node->next;
+            table->hooks->deallocate(node->key);
+            table->hooks->deallocate(node);
+            node = next;
+        }
+    }
+
+    table->hooks->deallocate(table->buckets);
+    table->hooks->deallocate(table);
+}
+case cJSON_Object:
+{
+    cJSON *a_element = NULL;
+    const cJSON *b_element = NULL;
+    str_hash_table *b_hash = NULL;
+    cJSON_bool result = false;
+
+    // 创建哈希表（初始大小16）
+    b_hash = create_hash_table(16, &global_hooks, case_sensitive);
+    if (!b_hash) return false;
+
+    // 1. 将b的键值对插入哈希表（O(n)）
+    cJSON_ArrayForEach(a_element, b)
+    {
+        if (!hash_table_insert(b_hash, a_element->string, a_element))
+        {
+            destroy_hash_table(b_hash);
+            return false;
+        }
+    }
+
+    // 2. 遍历a的键，哈希表查找比较（O(n)）
+    cJSON_ArrayForEach(a_element, a)
+    {
+        b_element = hash_table_lookup(b_hash, a_element->string);
+        if (!b_element || !cJSON_Compare(a_element, b_element, case_sensitive))
+        {
+            destroy_hash_table(b_hash);
+            return false;
+        }
+    }
+
+    // 3. 检查哈希表大小是否匹配（确保无多余键）
+    result = true;
+    cJSON_ArrayForEach(a_element, b)
+    {
+        if (!hash_table_lookup(b_hash, a_element->string))
+        {
+            result = false;
             break;
-
-        default:
-            return false;
-    }
-
-    /* identical objects are equal */
-    if (a == b)
-    {
-        return true;//同一对象
-    }
-
-    switch (a->type & 0xFF)
-    {
-        /* in these cases and equal type is enough */
-        case cJSON_False:
-        case cJSON_True:
-        case cJSON_NULL:
-            return true;//类型相同即相等
-
-        case cJSON_Number:
-            if (compare_double(a->valuedouble, b->valuedouble))
-            {
-                return true;
-            }
-            return false;
-
-        case cJSON_String:
-        case cJSON_Raw:
-            if ((a->valuestring == NULL) || (b->valuestring == NULL))
-            {
-                return false;
-            }
-            if (strcmp(a->valuestring, b->valuestring) == 0)
-            {
-                return true;
-            }
-
-            return false;
-
-        case cJSON_Array:
-        {
-            cJSON *a_element = a->child;
-            cJSON *b_element = b->child;
-// 逐个比较元素
-            for (; (a_element != NULL) && (b_element != NULL);)
-            {
-                if (!cJSON_Compare(a_element, b_element, case_sensitive))
-                {
-                    return false;
-                }
-
-                a_element = a_element->next;
-                b_element = b_element->next;
-            }
-// 长度必须相等
-            /* one of the arrays is longer than the other */
-            if (a_element != b_element) {
-                return false;
-            }
-
-            return true;
         }
-
-        case cJSON_Object:
-        {
-            cJSON *a_element = NULL;
-            cJSON *b_element = NULL;
-            // 遍历a的所有键，在b中查找
-            cJSON_ArrayForEach(a_element, a)
-            {
-                /* TODO This has O(n^2) runtime, which is horrible! */
-                b_element = get_object_item(b, a_element->string, case_sensitive);
-                if (b_element == NULL)
-                {
-                    return false;
-                }
-                // 再遍历b，确保a没有缺少b的键（防止a是b的子集）
-                if (!cJSON_Compare(a_element, b_element, case_sensitive))
-                {
-                    return false;
-                }
-            }
-
-            /* doing this twice, once on a and b to prevent true comparison if a subset of b
-             * TODO: Do this the proper way, this is just a fix for now */
-            cJSON_ArrayForEach(b_element, b)
-            {
-                a_element = get_object_item(a, b_element->string, case_sensitive);
-                if (a_element == NULL)
-                {
-                    return false;
-                }
-
-                if (!cJSON_Compare(b_element, a_element, case_sensitive))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        default:
-            return false;
     }
+
+    // 4. 释放哈希表
+    destroy_hash_table(b_hash);
+    return result;
 }
 // 内存分配函数，使用全局钩子
 CJSON_PUBLIC(void *) cJSON_malloc(size_t size)
