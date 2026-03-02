@@ -37,10 +37,111 @@ struct record
     const char *zip;
     const char *country;
 };
+// ===================== 新增：美化输出核心函数 =====================
+/**
+ * @brief 自定义美化打印JSON，支持指定缩进字符和缩进级别
+ * @param root cJSON根节点
+ * @param indent_char 缩进字符（如"  "或"\t"）
+ * @param indent_level 基础缩进级别
+ * @return 格式化后的JSON字符串（需手动释放），失败返回NULL
+ */
+static char* cJSON_PrintPrettyCustom(cJSON *root, const char *indent_char, int indent_level)
+{
+    if (root == NULL || indent_char == NULL || indent_level < 0) {
+        return NULL;
+    }
 
+    // 先获取无格式字符串，计算长度
+    char *unformatted = cJSON_PrintUnformatted(root);
+    if (unformatted == NULL) {
+        return NULL;
+    }
+
+    // 预分配足够大的缓冲区（无格式长度的3倍，适配缩进/换行）
+    size_t buf_size = strlen(unformatted) * 3 + 1;
+    char *formatted = (char*)malloc(buf_size);
+    if (formatted == NULL) {
+        free(unformatted);
+        return NULL;
+    }
+    memset(formatted, 0, buf_size);
+
+    // 格式化核心逻辑：遍历无格式字符串，按JSON语法添加换行和缩进
+    int pos = 0;          // 格式化字符串的写入位置
+    int current_indent = 0; // 当前缩进级别
+    int len = strlen(unformatted);
+    for (int i = 0; i < len; i++) {
+        switch (unformatted[i]) {
+            case '{':
+            case '[':
+                // 写入当前字符 + 换行 + 缩进
+                formatted[pos++] = unformatted[i];
+                formatted[pos++] = '\n';
+                current_indent += indent_level;
+                // 添加缩进
+                for (int j = 0; j < current_indent; j++) {
+                    formatted[pos++] = indent_char[0];
+                    if (indent_char[1] != '\0') { // 支持多字符缩进（如"  "）
+                        formatted[pos++] = indent_char[1];
+                    }
+                }
+                break;
+            case '}':
+            case ']':
+                // 换行 + 减少缩进 + 写入当前字符
+                formatted[pos++] = '\n';
+                current_indent -= indent_level;
+                if (current_indent < 0) current_indent = 0;
+                // 添加缩进
+                for (int j = 0; j < current_indent; j++) {
+                    formatted[pos++] = indent_char[0];
+                    if (indent_char[1] != '\0') {
+                        formatted[pos++] = indent_char[1];
+                    }
+                }
+                formatted[pos++] = unformatted[i];
+                // 如果下一个字符是,，则不换行
+                if (i + 1 < len && unformatted[i+1] == ',') {
+                    break;
+                }
+                // 否则换行
+                formatted[pos++] = '\n';
+                break;
+            case ',':
+                // 写入, + 换行 + 缩进
+                formatted[pos++] = unformatted[i];
+                formatted[pos++] = '\n';
+                // 添加缩进
+                for (int j = 0; j < current_indent; j++) {
+                    formatted[pos++] = indent_char[0];
+                    if (indent_char[1] != '\0') {
+                        formatted[pos++] = indent_char[1];
+                    }
+                }
+                break;
+            case ':':
+                // 冒号后加空格，提升可读性
+                formatted[pos++] = unformatted[i];
+                formatted[pos++] = ' ';
+                break;
+            default:
+                // 普通字符直接写入
+                formatted[pos++] = unformatted[i];
+                break;
+        }
+
+        // 防止缓冲区溢出
+        if (pos >= buf_size - 1) {
+            break;
+        }
+    }
+
+    free(unformatted);
+    return formatted;
+}
 
 /* Create a bunch of objects as demonstration. */
-static int print_preallocated(cJSON *root)
+static int print_preallocated(cJSON *root，const char *indent_char, int indent_level)
 {
     /* declarations */
     char *out = NULL;
@@ -50,8 +151,11 @@ static int print_preallocated(cJSON *root)
     size_t len_fail = 0;
 
     /* formatted print */
-    out = cJSON_Print(root);
-
+    out = cJSON_PrintPrettyCustom(root, indent_char, indent_level);
+if (out == NULL) {
+    printf("Failed to generate pretty JSON string!\n");
+    return -1;
+}//调用自定义美化
     /* create buffer to succeed */
     /* the extra 5 bytes are because of inaccuracies when reserving memory */
     len = strlen(out) + 5;
